@@ -79,5 +79,7 @@ def check_geometry(file):
     # if num_outliers > 0:
     #     print(f"Average deviation per outlier: {total_deviation/num_outliers:.2f}°")
     # print(f"Total deviation per ring residue: {total_deviation/total_ring_residues:.2f}°")
-
-    return total_deviation, total_deviation / total_ring_residues
+    if total_ring_residues == 0:
+        return 0
+    else:
+        return total_deviation, total_deviation / total_ring_residues
