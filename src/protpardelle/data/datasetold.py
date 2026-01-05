@@ -218,7 +218,7 @@ def make_crop_cond_mask_and_recenter_coords(
     hotspot_max: int = 8,
     hotspot_dropout: float = 0.1,
     paratope_prob: float = 0.5,
-    pdb_path: str = "",
+    pmhc: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Generate a random motif crop from a batch of protein structures.
 
@@ -349,7 +349,7 @@ def make_crop_cond_mask_and_recenter_coords(
                 mask[idxs] = 1
         # Keep one chain as the motif, generate the other chain.
         elif conditioning_type == "multichain":  # check if actually multichain
-            if "MHCI" in pdb_path:
+            if pmhc is not None and pmhc is True:
                 nrr = np.random.rand()
                 if nrr <= 0.25:
                     chain_as_motif = int(torch.unique(chain_index[i])[0])
@@ -372,33 +372,7 @@ def make_crop_cond_mask_and_recenter_coords(
 
                 else:
                     chain_as_motif = np.random.choice(torch.unique(chain_index[i]).cpu())
-                    idx_as_motif = (chain_index[i] == chain_as_motif) & (seq_mask[i] != 0) 
-            if "MHC2" in pdb_path:
-                nrr = np.random.rand()
-
-                if nrr <= 0.5:
-                    unique_chains = torch.unique(chain_index[i])
-                    
-                    chain_a_id = unique_chains[0]
-                    chain_b_id = unique_chains[1] if len(unique_chains) > 1 else unique_chains[0]
-                    
-                    chain_b_mask = (chain_index[i] == chain_b_id)
-                    chain_b_start = torch.nonzero(chain_b_mask)[0].item()  # First position of chain B
-                    
-                    chain_a_mask = (chain_index[i] == chain_a_id) & (seq_mask[i] != 0)
-                    chain_b_mask = (chain_index[i] == chain_b_id) & (seq_mask[i] != 0)
-                    
-                    n = atom_mask.shape[1]  # Total number of residue positions
-                    positions = torch.arange(n, device=device)
-                    
-                    range_mask_chain_b = positions >= (chain_b_start + 20)
-                    
-                    idx_as_motif = chain_a_mask | (chain_b_mask & range_mask_chain_b) 
-
-                else:
-                    chain_as_motif = np.random.choice(torch.unique(chain_index[i]).cpu())
-                    idx_as_motif = (chain_index[i] == chain_as_motif) & (seq_mask[i] != 0) 
-
+                    idx_as_motif = (chain_index[i] == chain_as_motif) & (seq_mask[i] != 0)               
             else:
                 chain_as_motif = np.random.choice(torch.unique(chain_index[i]).cpu())
                 idx_as_motif = (chain_index[i] == chain_as_motif) & (seq_mask[i] != 0)
@@ -805,10 +779,13 @@ class StochasticMixedSampler(Sampler):
                 )
 
                 for i, num in enumerate(num_samples, start=1):
-                    for _ in range(num):
-                        sample = next(iterators[i], None)
-                        if sample is not None:
-                            batch_indices.append(sample + self.offsets[i])
+                    batch_indices.extend(
+                        [
+                            next(iterators[i], None) + self.offsets[i]
+                            for _ in range(num)
+                            if next(iterators[i], None) is not None
+                        ]
+                    )
 
             # Yield the indices for this batch
             yield from batch_indices
@@ -842,14 +819,6 @@ def calc_sigma_data(
     collected_atom_masks = []
     collected_seq_masks = []
 
-    # Handle ConcatDataset by getting pdb_path from first underlying dataset
-    if hasattr(dataset, 'datasets'):
-        # This is a ConcatDataset
-        pdb_path = dataset.datasets[0].pdb_path
-    else:
-        # This is a regular PDBDataset
-        pdb_path = dataset.pdb_path
-
     num_batches = math.ceil(
         config.data.n_examples_for_sigma_data / config.train.batch_size
     )
@@ -866,7 +835,7 @@ def calc_sigma_data(
 
         if config.train.crop_conditional:
             coords, _, _ = make_crop_cond_mask_and_recenter_coords(
-                atom_mask, coords, pdb_path=pdb_path, **vars(config.train.crop_cond)
+                atom_mask, coords, **vars(config.train.crop_cond)
             )
 
         collected_coords.append(coords)
